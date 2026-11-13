@@ -1138,6 +1138,31 @@ def razorpay_payment_verify(request):
                 Address, id=snapshot["address_id"], user=request.user,
             )
 
+            quantities = {}
+            for item in snapshot["items"]:
+                quantities[item["variant_id"]] = (
+                    quantities.get(item["variant_id"], 0) + item["quantity"]
+                )
+            variants = {
+                variant.id: variant
+                for variant in ProductVariant.objects.select_for_update()
+                .filter(id__in=quantities).order_by("id")
+            }
+            for variant_id, quantity in quantities.items():
+                variant = variants.get(variant_id)
+                if (
+                    quantity <= 0 or variant is None
+                    or not variant.is_active or not variant.product.is_active
+                    or variant.stock < quantity
+                ):
+                    messages.error(
+                        request,
+                        "Payment received, but an item is unavailable. "
+                        "Please contact support with payment reference " + payment_id
+                        + " to arrange a refund or fulfillment.",
+                    )
+                    return redirect("cart")
+
             order = Order.objects.create(
                 user=request.user, address=address,
                 subtotal=Decimal(snapshot["subtotal"]),
@@ -1149,7 +1174,7 @@ def razorpay_payment_verify(request):
                 payment_method="Razorpay", status="Processing",
             )
             for item in snapshot["items"]:
-                variant = ProductVariant.objects.get(id=item["variant_id"])
+                variant = variants[item["variant_id"]]
                 OrderItem.objects.create(
                     order=order, variant=variant,
                     quantity=item["quantity"], price=Decimal(item["price"]),
