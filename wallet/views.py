@@ -2,11 +2,13 @@ from django.shortcuts import render, get_object_or_404, redirect
 from users.decorator import user_required
 from .models import Wallet, WalletTransaction
 import razorpay
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from django.conf import settings
 from django.views.decorators.csrf import csrf_exempt
 from django.contrib import messages
 from .utils import credit_wallet
+from django.db import transaction
+from payments.utils import verify_captured_payment
 from payments.models import Payment
 from django.core.paginator import Paginator
 # Create your views here.
@@ -42,7 +44,15 @@ def wallet_add_money_view(request):
             messages.error(request, "Enter an amount")
             return redirect('wallet')
         
-        amount = Decimal(amount)
+        try:
+            amount = Decimal(amount)
+            if (not amount.is_finite() or amount <= 0
+                    or amount != amount.quantize(Decimal("0.01"))
+                    or amount > Decimal("99999999.99")):
+                raise ValueError("Invalid amount")
+        except (InvalidOperation, ValueError):
+            messages.error(request, "Enter a positive amount with at most two decimal places.")
+            return redirect("wallet")
 
         payment = Payment.objects.create(
             user=request.user,
@@ -98,25 +108,24 @@ def wallet_payment_success_view(request):
         # Razorpay signature verification
         client.utility.verify_payment_signature(params_dict)
 
-        # Fetch payment from DB
-        payment = Payment.objects.get(razorpay_order_id=order_id, user=request.user)
-
-        wallet, _ = Wallet.objects.get_or_create(user=request.user)
-
-
-        if payment.status != "SUCCESS":
-            payment.status = "SUCCESS"          
-            payment.razorpay_payment_id = payment_id
-            payment.razorpay_signature = signature
-            payment.save()
-
-            # Credit wallet securely
-            credit_wallet(wallet, payment.amount, "Wallet Top-up via Razorpay")
+        with transaction.atomic():
+            payment = get_object_or_404(
+                Payment.objects.select_for_update(), razorpay_order_id=order_id,
+                user=request.user, purpose="wallet_topup",
+            )
+            if payment.status != "SUCCESS":
+                verify_captured_payment(client, payment, payment_id)
+                wallet, _ = Wallet.objects.get_or_create(user=request.user)
+                credit_wallet(wallet, payment.amount, "Wallet Top-up via Razorpay")
+                payment.status = "SUCCESS"
+                payment.razorpay_payment_id = payment_id
+                payment.razorpay_signature = signature
+                payment.save()
 
         messages.success(request, f"₹{payment.amount} added to wallet successfully!")
         return redirect("wallet")
 
-    except razorpay.errors.SignatureVerificationError:
+    except (razorpay.errors.SignatureVerificationError, ValueError):
         messages.error(request, "Payment verification failed.")
         return redirect("wallet")
     
