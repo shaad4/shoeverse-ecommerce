@@ -245,6 +245,10 @@ static/       Images, JavaScript, and other static assets
 
 ## Deployment
 
+For the Gunicorn + Nginx + PostgreSQL setup behind Tailscale Funnel, follow
+[the server deployment guide](DEPLOYMENT.md). Use `compose.production.yaml`;
+the default Compose file remains for local development.
+
 Set `DJANGO_DEBUG=false`, provide a strong `SECRET_KEY`, and configure the actual
 hosts and HTTPS CSRF origins. HTTPS redirects and secure session/CSRF cookies are
 enabled when debug mode is off. Serve Django through a production WSGI/ASGI server
