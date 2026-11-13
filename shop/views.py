@@ -1123,9 +1123,13 @@ def razorpay_payment_verify(request):
         with transaction.atomic():
 
             payment = get_object_or_404(
-                Payment, razorpay_order_id=order_id,
+                Payment.objects.select_for_update(), razorpay_order_id=order_id,
                 user=request.user, purpose="order_payment",
             )
+            if payment.order_id:
+                return redirect("order_success", order_id=payment.order_id)
+            if payment.status == "SUCCESS":
+                raise ValueError("This payment has already been processed.")
             verify_captured_payment(client, payment, payment_id)
             snapshot = payment.checkout_snapshot
             if not snapshot or not snapshot.get("items"):
@@ -1158,6 +1162,7 @@ def razorpay_payment_verify(request):
                     variant_id=item["variant_id"], quantity=item["quantity"],
                 ).delete()
 
+            payment.order = order
             payment.status = "SUCCESS"
             payment.razorpay_payment_id = payment_id
             payment.razorpay_signature = signature
