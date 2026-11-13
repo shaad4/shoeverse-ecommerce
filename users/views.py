@@ -412,15 +412,14 @@ def home_view(request):
 
     banners = Banner.objects.filter(is_active = True).order_by('order')
 
-    p1 = Product.objects.get(id=9)
-    p2 = Product.objects.get(id=15)
-    p3 = Product.objects.get(id=11)
-    p4 = Product.objects.get(id=18)
-
+    products = Product.objects.filter(is_active=True).order_by("-created_at")
+    featured_ids = settings.HOMEPAGE_FEATURED_PRODUCT_IDS
+    if featured_ids:
+        products = products.filter(id__in=featured_ids)
     context = {
-        "p1":p1,"p2":p2,"p3":p3,"p4":p4,
-        "banners" : banners
-        }
+        "featured_products": products.prefetch_related("images")[:4],
+        "banners": banners,
+    }
 
 
     return render(request, "users/home.html", context)

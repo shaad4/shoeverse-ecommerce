@@ -40,6 +40,13 @@ class SkipNgrokWarningMiddleware:
 # SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = os.getenv('SECRET_KEY')
 
+# Optional comma-separated product IDs; otherwise show the latest active products.
+HOMEPAGE_FEATURED_PRODUCT_IDS = [
+    int(value.strip())
+    for value in os.getenv("HOMEPAGE_FEATURED_PRODUCT_IDS", "").split(",")
+    if value.strip()
+]
+
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
