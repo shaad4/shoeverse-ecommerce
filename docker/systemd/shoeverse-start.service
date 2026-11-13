@@ -1,0 +1,15 @@
+[Unit]
+Description=Start and reconcile the Shoeverse production containers
+Wants=network-online.target cloudflared.service
+After=network-online.target docker.service
+Requires=docker.service
+RequiresMountsFor=/data/home/project/shoeverse-ecommerce
+
+[Service]
+Type=oneshot
+WorkingDirectory=/data/home/project/shoeverse-ecommerce
+ExecStart=/usr/bin/env docker compose -f compose.production.yaml up -d --no-build --pull never --wait --wait-timeout 180
+TimeoutStartSec=240
+
+[Install]
+WantedBy=multi-user.target

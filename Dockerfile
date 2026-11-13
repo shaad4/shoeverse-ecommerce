@@ -20,7 +20,7 @@ RUN --mount=type=secret,id=proxy_ca \
 
 RUN groupadd --gid 10001 app && useradd --uid 10001 --gid app --create-home app
 COPY --chown=app:app . .
-RUN chown app:app /app && chmod +x docker/entrypoint.sh
+RUN mkdir -p /app/staticfiles && chown app:app /app /app/staticfiles && chmod +x docker/entrypoint.sh
 USER app
 
 EXPOSE 8000

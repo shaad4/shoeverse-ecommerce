@@ -194,6 +194,45 @@ Set `WEB_PORT` in `.env` to change the host port. `docker compose down --volumes
 **deletes the local database**. Secrets and local virtual environments are excluded
 from the image by `.dockerignore`; Compose supplies runtime credentials from `.env`.
 
+## Bulk demo catalog
+
+A bundled catalog contains **53 products with 53 distinct real product photos**
+across Nike, Adidas, Air Jordan, Puma, and New Balance. Prices, sizes, and stock
+are demonstration data; descriptions label the listings as demos.
+
+On box3, configure your Cloudinary credentials in `.env`, then rebuild and seed:
+
+```sh
+git pull --ff-only origin fix/payment-refund-stock-integrity
+docker compose -f compose.production.yaml up --build --wait --wait-timeout 180
+
+# Preview all entries without downloads or writes.
+docker compose -f compose.production.yaml exec web python manage.py seed_demo_products --dry-run
+
+# Optional: confirm three uploads first.
+docker compose -f compose.production.yaml exec web python manage.py seed_demo_products --limit 3
+
+# Import the full catalog; completed entries are skipped.
+docker compose -f compose.production.yaml exec web python manage.py seed_demo_products
+```
+
+Reruns preserve existing demo prices, edits, stock, and images. Missing photos
+can be retried; failed downloads/uploads do not leave newly created empty
+listings. The command uses a demo SKU marker and does not match or overwrite
+ordinary catalog products. Run one importer at a time.
+
+Images are downloaded and uploaded into the configured storage rather than
+hotlinked from your storefront. Working Cloudinary credentials and outbound
+image access are required in production. If any import fails, the command exits
+with an error and reports its demo SKU; fix access and rerun. Successful entries
+are kept. Remote image availability can change.
+
+Catalog metadata and image URLs are in
+[`products/data/demo_products.json`](products/data/demo_products.json), including
+the source reference. The sample photos are for demonstrating the catalog;
+replace them with your own or appropriately licensed supplier assets for a
+commercial storefront. No reviews, sales, or purchase histories are fabricated.
+
 ## Payments and order handling
 
 Razorpay checkout saves the items, prices, totals, and delivery address before
@@ -243,7 +282,23 @@ templates/    Shared layouts and partials
 static/       Images, JavaScript, and other static assets
 ```
 
+## Automatic startup on box3
+
+After the production stack and host Cloudflare service are configured, run:
+
+```sh
+sudo sh docker/install-autostart.sh
+```
+
+This enables Docker/Cloudflare at boot and retries production container startup
+every two minutes while box3 is running. It does not bypass Instabox cooldowns
+or wake a paused VM. See [startup and maintenance instructions](DEPLOYMENT.md#automatic-startup-on-box3).
+
 ## Deployment
+
+For the Gunicorn + Nginx + PostgreSQL setup behind Tailscale Funnel, follow
+[the server deployment guide](DEPLOYMENT.md). Use `compose.production.yaml`;
+the default Compose file remains for local development.
 
 Set `DJANGO_DEBUG=false`, provide a strong `SECRET_KEY`, and configure the actual
 hosts and HTTPS CSRF origins. HTTPS redirects and secure session/CSRF cookies are

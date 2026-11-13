@@ -1,0 +1,11 @@
+[Unit]
+Description=Retry Shoeverse startup while box3 is running
+
+[Timer]
+OnBootSec=30s
+OnUnitInactiveSec=2min
+AccuracySec=10s
+Unit=shoeverse-start.service
+
+[Install]
+WantedBy=timers.target
