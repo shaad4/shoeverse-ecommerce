@@ -3,7 +3,7 @@
 Create a virtual environment, install `requirements-test.txt`, and run:
 
 ```sh
-python manage.py test shop wallet users --settings=shoeverse.test_settings
+python manage.py test products shop wallet users --settings=shoeverse.test_settings
 python manage.py makemigrations --check --dry-run --settings=shoeverse.test_settings
 ```
 
@@ -38,3 +38,7 @@ commerce tests against the container's PostgreSQL database. See the
   webhook reconciliation are outside this change.
 - `HOMEPAGE_FEATURED_PRODUCT_IDS` optionally selects a comma-separated set of
   products. Otherwise the homepage displays up to four latest active products.
+
+The product importer suite uses in-memory image storage and mocked downloads.
+It checks preview mode, repeated import/stock preservation, and rollback after
+image or storage failures; CI never fetches catalog photos or seeds live data.
