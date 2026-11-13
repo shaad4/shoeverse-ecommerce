@@ -9,6 +9,7 @@ media/
 profiles/user_10/
 
 # Virtual env
+.venv/
 venv/
 env/
 

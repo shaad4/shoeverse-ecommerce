@@ -145,6 +145,55 @@ For Google sign-in, configure the Django Sites entry with ID `1` for your host
 and register the matching OAuth redirect URI, for example
 `http://localhost:8000/accounts/google/login/callback/`.
 
+## Run with Docker Compose
+
+Docker Engine/Desktop with Compose v2 runs Django and PostgreSQL together. This
+is a **local development** stack using Django's development server. Python,
+PostgreSQL, and Cairo do not need to be installed on your host.
+
+1. Copy `.env.example` to `.env` and set a non-empty `SECRET_KEY`.
+2. Set `DJANGO_DEBUG=true` for local HTTP access. Production settings otherwise
+   redirect HTTP to HTTPS. Keep `localhost` in `DJANGO_ALLOWED_HOSTS` for the
+   container health check. Add any SMTP, Cloudinary, and Razorpay test credentials
+   needed for the flows you want to use.
+3. Start the stack:
+
+```sh
+docker compose up --build --wait
+docker compose exec web python manage.py createsuperuser
+```
+
+Open [localhost:8000](http://localhost:8000/). Migrations run automatically before
+the web server starts; PostgreSQL must pass its readiness check first. The app
+runs as a non-root user. PostgreSQL data persists in the `postgres_data` named
+volume, and the database port is not exposed to the host.
+
+Compose uses `DB_NAME`, `DB_USER`, and `DB_PASSWORD` from `.env`, falling back to
+`shoeverse` for local development when blank. It sets the application's database
+host to `db` and port to `5432` inside Docker, regardless of the host settings in
+`.env`. Choose your credentials before the first startup; changing them later
+does not modify an already initialized PostgreSQL volume.
+
+Useful commands:
+
+```sh
+# Follow application output.
+docker compose logs -f web
+
+# Run all commerce tests against the container's PostgreSQL database.
+docker compose exec -e TEST_POSTGRES=true web python manage.py test shop wallet users --settings=shoeverse.test_settings
+
+# Rebuild after changing code or dependencies; source is copied into the image.
+docker compose up --build --wait
+
+# Stop the stack while keeping database data.
+docker compose down
+```
+
+Set `WEB_PORT` in `.env` to change the host port. `docker compose down --volumes`
+**deletes the local database**. Secrets and local virtual environments are excluded
+from the image by `.dockerignore`; Compose supplies runtime credentials from `.env`.
+
 ## Payments and order handling
 
 Razorpay checkout saves the items, prices, totals, and delivery address before

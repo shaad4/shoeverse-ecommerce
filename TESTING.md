@@ -16,7 +16,10 @@ SQLite is the default for local checks. Three concurrency tests require
 PostgreSQL and are skipped on SQLite. To run them, set `TEST_POSTGRES=true` plus
 `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_HOST`, and `DB_PORT`; the database user
 must be allowed to create a test database. The GitHub Actions workflow runs the
-suite against PostgreSQL 16.
+suite against PostgreSQL 16. A second CI job builds the full Docker image,
+starts the Compose stack, checks the storefront health endpoint, and runs all
+commerce tests against the container's PostgreSQL database. See the
+[Docker instructions](README.md#run-with-docker-compose) to reproduce this locally.
 
 ## Deploying these fixes
 

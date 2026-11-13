@@ -43,3 +43,21 @@ jobs:
       - run: pip install -r requirements-test.txt
       - run: python manage.py makemigrations --check --dry-run
       - run: python manage.py test shop wallet users --verbosity=2
+
+  docker:
+    runs-on: ubuntu-latest
+    env:
+      SECRET_KEY: docker-ci-only-key-not-for-production
+      DJANGO_DEBUG: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - run: cp .env.example .env
+      - run: docker compose config --quiet
+      - run: docker compose up --build --wait --wait-timeout 180
+      - run: docker compose exec -T -e TEST_POSTGRES=true web python manage.py test shop wallet users --settings=shoeverse.test_settings --verbosity=2
+      - name: Container logs
+        if: failure()
+        run: docker compose logs --no-color
+      - name: Stop containers
+        if: always()
+        run: docker compose down --volumes
