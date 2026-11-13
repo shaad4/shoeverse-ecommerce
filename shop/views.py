@@ -1,7 +1,7 @@
 from django.shortcuts import render,  get_object_or_404, redirect
 from products.models import Product, SubCategory, ProductReview
 from django.core.paginator import Paginator
-from django.db.models import Count, Q, Avg
+from django.db.models import Count, Q, Avg, F
 from django.views.decorators.csrf import csrf_exempt
 from products.models import Product, ProductVariant
 from django.contrib import messages
@@ -1293,10 +1293,18 @@ def cancel_order(request, order_id):
 
         try:
             with transaction.atomic():
-                order_items = OrderItem.objects.filter(order=order)
+                order = Order.objects.select_for_update().get(pk=order.pk)
+                if order.status not in ["Pending", "Processing"]:
+                    return redirect("order_detail", order_id=order.order_id)
+                order_items = OrderItem.objects.select_for_update().filter(
+                    order=order,
+                ).exclude(status="Cancelled")
                 for item in order_items:
-                    item.variant.stock += item.quantity
-                    item.variant.save()
+                    ProductVariant.objects.filter(pk=item.variant_id).update(
+                        stock=F("stock") + item.quantity,
+                    )
+                    item.status = "Cancelled"
+                    item.save(update_fields=["status"])
 
 
                 if order.coupon:
@@ -1310,6 +1318,7 @@ def cancel_order(request, order_id):
 
                 if order.payment_method in ["wallet","razorpay","Razorpay"]:
                     wallet,_ = Wallet.objects.get_or_create(user=request.user)
+                    wallet = Wallet.objects.select_for_update().get(pk=wallet.pk)
                     refund_amount = order.total_amount
 
                     balance_before = wallet.balance
@@ -1351,13 +1360,19 @@ def cancel_order_item(request, item_id):
     if request.method == "POST":
         try:
             with transaction.atomic():
+                order = Order.objects.select_for_update().get(pk=order.pk)
+                item = OrderItem.objects.select_for_update().get(pk=item.pk)
+                if (order.status not in ["Pending", "Processing"]
+                        or item.status == "Cancelled"):
+                    return redirect("order_detail", order_id=order.order_id)
                 old_grand_total = order.total_amount
 
                 item.status = "Cancelled"
                 item.save()
 
-                item.variant.stock += item.quantity
-                item.variant.save()
+                ProductVariant.objects.filter(pk=item.variant_id).update(
+                    stock=F("stock") + item.quantity,
+                )
                 
                 active_items = order.items.exclude(status='Cancelled')
 
@@ -1395,7 +1410,7 @@ def cancel_order_item(request, item_id):
                                 new_discount = order.coupon.discountValue
 
                         if new_discount  > new_subtotal:
-                            new_subtotal = new_subtotal
+                            new_discount = new_subtotal
 
                     order.discount_amount = new_discount.quantize(Decimal("0.01"))
 
@@ -1406,7 +1421,7 @@ def cancel_order_item(request, item_id):
 
 
                     
-                    if order.subtotal >= 1000:
+                    if taxable_amount >= 1000:
                         order.delivery_charge = Decimal(0)
                     else:
                         order.delivery_charge = Decimal(100)
@@ -1421,6 +1436,7 @@ def cancel_order_item(request, item_id):
 
                 if refund_amount > 0 and order.payment_method in ["wallet", "razorpay", "Razorpay"]:
                     wallet,_ = Wallet.objects.get_or_create(user=request.user)
+                    wallet = Wallet.objects.select_for_update().get(pk=wallet.pk)
 
                     balance_before = wallet.balance
                     wallet.balance += refund_amount
