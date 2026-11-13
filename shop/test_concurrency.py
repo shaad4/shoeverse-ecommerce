@@ -84,5 +84,7 @@ class PaymentConcurrencyTests(TransactionTestCase):
         self.payment.purpose = "wallet_topup"
         self.payment.save()
         self.run_callbacks(reverse("wallet_payment_success"), ["order_first", "order_first"])
+        self.payment.refresh_from_db()
+        self.assertEqual(self.payment.status, "SUCCESS")
         self.assertEqual(Wallet.objects.get(user=self.user).balance, self.payment.amount)
         self.assertEqual(WalletTransaction.objects.count(), 1)
