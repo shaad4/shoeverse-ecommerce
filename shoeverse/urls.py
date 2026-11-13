@@ -35,7 +35,8 @@ urlpatterns = [
 ]
 
 
-if settings.DEBUG:
+# Cloudinary storage does not configure a local media URL or directory.
+if settings.DEBUG and settings.MEDIA_URL and settings.MEDIA_ROOT:
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
 
 def custom_404(request, exception):
