@@ -51,6 +51,10 @@ jobs:
       DJANGO_DEBUG: "true"
     steps:
       - uses: actions/checkout@v4
+      - name: Validate startup scripts and systemd units
+        run: |
+          sh -n docker/install-autostart.sh
+          systemd-analyze --man=no verify docker/systemd/shoeverse-start.service docker/systemd/shoeverse-start.timer
       - run: cp .env.example .env
       - run: docker compose config --quiet
       - run: docker compose up --build --wait --wait-timeout 180

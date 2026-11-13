@@ -86,3 +86,59 @@ a custom HTTPS domain to Funnel. Select an ingress supporting your domain
 Django's allowed hosts, CSRF origins, Google callbacks, and the ingress TLS
 configuration together. Namecheap DNS remains unchanged during this initial
 Funnel deployment.
+
+## Automatic startup on box3
+
+For `shoeverse.shaad.site` through Cloudflare Tunnel, keep the existing
+`cloudflared.service` installed on the host. Once the production images are built
+and `.env` is configured, run on box3:
+
+```sh
+cd ~/project/shoeverse-ecommerce
+sudo sh docker/install-autostart.sh
+```
+
+This installer targets `/data/home/project/shoeverse-ecommerce`. It enables Docker
+and the existing Cloudflare service at boot and installs:
+
+- `shoeverse-start.service`: brings up the production stack without rebuilding,
+  pulling images, resetting inventory, or deleting volumes.
+- `shoeverse-start.timer`: retries the same startup every two minutes while the
+  VM is running, including after a suspend/resume where boot units do not rerun.
+
+The existing container restart policies still apply. The timer reconciles the
+current Compose configuration, so saved `.env` or Compose changes can be applied
+automatically on its next run. Deploy and build new application code explicitly.
+
+Verify with:
+
+```sh
+systemctl is-enabled docker cloudflared shoeverse-start.service shoeverse-start.timer
+systemctl is-active docker cloudflared shoeverse-start.timer
+systemctl list-timers shoeverse-start.timer --no-pager
+sudo journalctl -u shoeverse-start.service -n 40 --no-pager
+docker compose -f compose.production.yaml ps
+```
+
+The startup service is a one-shot task. Seeing it become `inactive (dead)` after
+a successful run is normal; the timer and containers should remain running.
+
+For planned maintenance, disable autostart before stopping the containers:
+
+```sh
+sudo systemctl disable --now shoeverse-start.timer shoeverse-start.service
+docker compose -f compose.production.yaml down
+```
+
+To restore it, rerun the installer. Database volumes are retained by these steps.
+
+### Instabox cooldown versus application startup
+
+Startup services run only when the VM runs. They cannot wake a paused VM or
+shorten an enforced cooldown. Instabox documents automatic wake for its own SSH,
+API and published-port requests; a request through an independent Cloudflare
+Tunnel cannot reach its connector while the VM is paused. After the cooldown,
+use Instabox's supported wake/resume mechanism; these services then handle app
+startup/retries. Consistent public availability requires hosting without an
+enforced runtime pause. See
+[Instabox auto-pause and maximum runtime](https://instabox.sh/docs/machines/auto-pause).

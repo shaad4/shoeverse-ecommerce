@@ -282,6 +282,18 @@ templates/    Shared layouts and partials
 static/       Images, JavaScript, and other static assets
 ```
 
+## Automatic startup on box3
+
+After the production stack and host Cloudflare service are configured, run:
+
+```sh
+sudo sh docker/install-autostart.sh
+```
+
+This enables Docker/Cloudflare at boot and retries production container startup
+every two minutes while box3 is running. It does not bypass Instabox cooldowns
+or wake a paused VM. See [startup and maintenance instructions](DEPLOYMENT.md#automatic-startup-on-box3).
+
 ## Deployment
 
 For the Gunicorn + Nginx + PostgreSQL setup behind Tailscale Funnel, follow
