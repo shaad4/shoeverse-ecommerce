@@ -937,8 +937,8 @@ def admin_return_detail(request, return_id):
 
                 if new_status == "REFUNDED" and previous_status != "REFUNDED":
 
-                    if not return_request.refund_amount:
-                        return_request.refund_amount = return_request.calculate_refund_amount()
+                    # Recalculate pending requests created before the refund fix too.
+                    return_request.refund_amount = return_request.calculate_refund_amount()
 
                     wallet,_ = Wallet.objects.get_or_create(user=return_request.user)
 
