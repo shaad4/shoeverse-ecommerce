@@ -181,13 +181,25 @@ class ReturnRequest(models.Model):
         return f"Return {self.order_item.variant.product.name} ({self.status})"
 
     def calculate_refund_amount(self):
-        base_item_total = self.order_item.price * self.order_item.quantity
-
-        tax_amount = base_item_total * Decimal('0.18')
-
-        total_refund = base_item_total + tax_amount
-
-        return total_refund.quantize(Decimal("0.01"))
+        order = self.order_item.order
+        # Allocate the actual merchandise/tax payment; shipping is not refundable.
+        # Cumulative rounding makes all item refunds add up exactly to this pool.
+        items = list(order.items.exclude(status="Cancelled").order_by("id"))
+        subtotal = sum((item.total_price for item in items), Decimal("0"))
+        if subtotal <= 0:
+            return Decimal("0.00")
+        pool = max(Decimal("0"), min(
+            order.total_amount - order.delivery_charge,
+            order.subtotal - order.discount_amount + order.gst,
+        ))
+        cumulative = Decimal("0")
+        for item in items:
+            before = (pool * cumulative / subtotal).quantize(Decimal("0.01"))
+            cumulative += item.total_price
+            after = (pool * cumulative / subtotal).quantize(Decimal("0.01"))
+            if item.pk == self.order_item.pk:
+                return after - before
+        return Decimal("0.00")
 
     def save(self, *args, **kwargs):
         if not self.refund_amount:

@@ -1,7 +1,7 @@
 from django.shortcuts import render,  get_object_or_404, redirect
 from products.models import Product, SubCategory, ProductReview
 from django.core.paginator import Paginator
-from django.db.models import Count, Q, Avg
+from django.db.models import Count, Q, Avg, F
 from django.views.decorators.csrf import csrf_exempt
 from products.models import Product, ProductVariant
 from django.contrib import messages
@@ -20,6 +20,7 @@ from wallet.models import Wallet, WalletTransaction
 import razorpay
 from django.conf import settings
 from payments.models import Payment
+from payments.utils import verify_captured_payment
 from django.db import transaction
 from coupons.models import Coupon, CouponUsage
 from django.db.models import IntegerField
@@ -982,7 +983,20 @@ def place_order(request):
             amount=grand_total,
             purpose="order_payment",
             razorpay_order_id=razorpay_order['id'],
-            status="pending",
+            status="PENDING",
+            checkout_snapshot={
+                "address_id": address.id,
+                "subtotal": str(subtotal),
+                "gst": str(gst),
+                "delivery_charge": str(delivery_charge),
+                "discount_amount": str(discount_amount),
+                "coupon_id": applied_coupon.id if applied_coupon else None,
+                "items": [
+                    {"cart_item_id": item.id, "variant_id": item.variant_id,
+                     "quantity": item.quantity, "price": str(item.unit_price)}
+                    for item in cart_items
+                ],
+            },
         )
 
         return render(request, "shop/razorpay_payment.html", {
@@ -1108,92 +1122,82 @@ def razorpay_payment_verify(request):
 
         with transaction.atomic():
 
-            #upafte payment table
-            payment = get_object_or_404(Payment, razorpay_order_id=order_id)
-            payment.status = "SUCCESS"
-            payment.razorpay_payment_id = payment_id
-            payment.save()
-
-            address = get_object_or_404(Address, id=address_id, user=request.user)
-
-            # Cart items
-            data = get_cart_totals(request.user)
-            cart_items = data['cart_items']
-
-       
-            if not cart_items.exists():
-                messages.error(request, "Your cart is empty")
-                return redirect("cart")
-        
-            # Price calculation
-            
-            subtotal = data["subtotal"]
-            
-
-            discount_amount = Decimal("0")
-            coupon_code = request.session.get("applied_coupon")
-            applied_coupon = None
-
-            if coupon_code:
-                try:
-                    coupon = Coupon.objects.get(code=coupon_code)
-
-                    if coupon.discountType == "percent":
-                        discount_amount = (subtotal * coupon.discountValue) / 100
-                    else:
-                        discount_amount  = coupon.discountValue
-
-                    if discount_amount > subtotal:
-                        discount_amount = subtotal
-                    applied_coupon = coupon
-
-                except:
-                    pass
-                    
-            discount_amount = discount_amount.quantize(Decimal("0.01"))
-
-            taxable_amount = (subtotal - discount_amount).quantize(Decimal("0.01"))
-            gst = (taxable_amount * Decimal("0.18")).quantize(Decimal("0.01"))
-
-            delivery_charge = delivery_charge = Decimal('0') if taxable_amount >= Decimal('1000') else Decimal('100')
-
-            grand_total = taxable_amount + gst + delivery_charge
-
-            order = Order.objects.create(
-                user=request.user,
-                address=address,
-                subtotal=subtotal,
-                gst = gst,
-                delivery_charge = delivery_charge,
-
-                coupon = applied_coupon,
-                discount_amount = discount_amount,
-                
-                total_amount = grand_total,
-                payment_method="Razorpay",
-                status='Processing'
+            payment = get_object_or_404(
+                Payment.objects.select_for_update(), razorpay_order_id=order_id,
+                user=request.user, purpose="order_payment",
+            )
+            if payment.order_id:
+                return redirect("order_success", order_id=payment.order_id)
+            if payment.status == "SUCCESS":
+                raise ValueError("This payment has already been processed.")
+            verify_captured_payment(client, payment, payment_id)
+            snapshot = payment.checkout_snapshot
+            if not snapshot or not snapshot.get("items"):
+                raise ValueError("Checkout details are missing. Please contact support.")
+            address = get_object_or_404(
+                Address, id=snapshot["address_id"], user=request.user,
             )
 
-            # Create Order Items & reduce stock
-            for item in cart_items:
-                
-                OrderItem.objects.create(
-                    order=order,
-                    variant=item.variant,
-                    quantity=item.quantity,
-                    price=item.variant.product.final_price,
+            quantities = {}
+            for item in snapshot["items"]:
+                quantities[item["variant_id"]] = (
+                    quantities.get(item["variant_id"], 0) + item["quantity"]
                 )
-                item.variant.stock -= item.quantity
-                item.variant.save()
+            variants = {
+                variant.id: variant
+                for variant in ProductVariant.objects.select_for_update()
+                .filter(id__in=quantities).order_by("id")
+            }
+            for variant_id, quantity in quantities.items():
+                variant = variants.get(variant_id)
+                if (
+                    quantity <= 0 or variant is None
+                    or not variant.is_active or not variant.product.is_active
+                    or variant.stock < quantity
+                ):
+                    messages.error(
+                        request,
+                        "Payment received, but an item is unavailable. "
+                        "Please contact support with payment reference " + payment_id
+                        + " to arrange a refund or fulfillment.",
+                    )
+                    return redirect("cart")
 
-            # Clear cart after ordering
-            cart_items.delete()
+            order = Order.objects.create(
+                user=request.user, address=address,
+                subtotal=Decimal(snapshot["subtotal"]),
+                gst=Decimal(snapshot["gst"]),
+                delivery_charge=Decimal(snapshot["delivery_charge"]),
+                discount_amount=Decimal(snapshot["discount_amount"]),
+                coupon_id=snapshot["coupon_id"],
+                total_amount=payment.amount,
+                payment_method="Razorpay", status="Processing",
+            )
+            for item in snapshot["items"]:
+                variant = variants[item["variant_id"]]
+                OrderItem.objects.create(
+                    order=order, variant=variant,
+                    quantity=item["quantity"], price=Decimal(item["price"]),
+                )
+                variant.stock -= item["quantity"]
+                variant.save()
+                # Keep items added or edited while the payment window was open.
+                CartItem.objects.filter(
+                    id=item["cart_item_id"], user=request.user,
+                    variant_id=item["variant_id"], quantity=item["quantity"],
+                ).delete()
+
+            payment.order = order
+            payment.status = "SUCCESS"
+            payment.razorpay_payment_id = payment_id
+            payment.razorpay_signature = signature
+            payment.save()
 
         return redirect('order_success', order_id=order.id)
 
 
     except razorpay.errors.SignatureVerificationError:
-        payment = Payment.objects.filter(razorpay_order_id=order_id).first()
+        payment = Payment.objects.filter(razorpay_order_id=order_id, user=request.user, purpose="order_payment").first()
         messages.error(request, "Payment verification failed.")
         return redirect('payment_failed', order_id=payment.id if payment else 0)
     except Exception as e:
@@ -1259,11 +1263,12 @@ def razorpay_payment_failed(request):
     error_description = request.GET.get('description')
     address_id = request.GET.get('address_id')
 
-    payment = Payment.objects.filter(razorpay_order_id=order_id).first()
+    payment = Payment.objects.filter(razorpay_order_id=order_id, user=request.user, purpose="order_payment").first()
     
-    if payment:
-        payment.status = "FAILED"
-        payment.save()
+    Payment.objects.filter(
+        razorpay_order_id=order_id, user=request.user,
+        purpose="order_payment", status="PENDING",
+    ).update(status="FAILED")
 
     return render(request, "shop/order_failed.html", {
         "payment": payment,
@@ -1288,10 +1293,18 @@ def cancel_order(request, order_id):
 
         try:
             with transaction.atomic():
-                order_items = OrderItem.objects.filter(order=order)
+                order = Order.objects.select_for_update().get(pk=order.pk)
+                if order.status not in ["Pending", "Processing"]:
+                    return redirect("order_detail", order_id=order.order_id)
+                order_items = OrderItem.objects.select_for_update().filter(
+                    order=order,
+                ).exclude(status="Cancelled")
                 for item in order_items:
-                    item.variant.stock += item.quantity
-                    item.variant.save()
+                    ProductVariant.objects.filter(pk=item.variant_id).update(
+                        stock=F("stock") + item.quantity,
+                    )
+                    item.status = "Cancelled"
+                    item.save(update_fields=["status"])
 
 
                 if order.coupon:
@@ -1305,6 +1318,7 @@ def cancel_order(request, order_id):
 
                 if order.payment_method in ["wallet","razorpay","Razorpay"]:
                     wallet,_ = Wallet.objects.get_or_create(user=request.user)
+                    wallet = Wallet.objects.select_for_update().get(pk=wallet.pk)
                     refund_amount = order.total_amount
 
                     balance_before = wallet.balance
@@ -1346,13 +1360,19 @@ def cancel_order_item(request, item_id):
     if request.method == "POST":
         try:
             with transaction.atomic():
+                order = Order.objects.select_for_update().get(pk=order.pk)
+                item = OrderItem.objects.select_for_update().get(pk=item.pk)
+                if (order.status not in ["Pending", "Processing"]
+                        or item.status == "Cancelled"):
+                    return redirect("order_detail", order_id=order.order_id)
                 old_grand_total = order.total_amount
 
                 item.status = "Cancelled"
                 item.save()
 
-                item.variant.stock += item.quantity
-                item.variant.save()
+                ProductVariant.objects.filter(pk=item.variant_id).update(
+                    stock=F("stock") + item.quantity,
+                )
                 
                 active_items = order.items.exclude(status='Cancelled')
 
@@ -1390,7 +1410,7 @@ def cancel_order_item(request, item_id):
                                 new_discount = order.coupon.discountValue
 
                         if new_discount  > new_subtotal:
-                            new_subtotal = new_subtotal
+                            new_discount = new_subtotal
 
                     order.discount_amount = new_discount.quantize(Decimal("0.01"))
 
@@ -1401,7 +1421,7 @@ def cancel_order_item(request, item_id):
 
 
                     
-                    if order.subtotal >= 1000:
+                    if taxable_amount >= 1000:
                         order.delivery_charge = Decimal(0)
                     else:
                         order.delivery_charge = Decimal(100)
@@ -1416,6 +1436,7 @@ def cancel_order_item(request, item_id):
 
                 if refund_amount > 0 and order.payment_method in ["wallet", "razorpay", "Razorpay"]:
                     wallet,_ = Wallet.objects.get_or_create(user=request.user)
+                    wallet = Wallet.objects.select_for_update().get(pk=wallet.pk)
 
                     balance_before = wallet.balance
                     wallet.balance += refund_amount

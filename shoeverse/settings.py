@@ -40,16 +40,24 @@ class SkipNgrokWarningMiddleware:
 # SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = os.getenv('SECRET_KEY')
 
+# Optional comma-separated product IDs; otherwise show the latest active products.
+HOMEPAGE_FEATURED_PRODUCT_IDS = [
+    int(value.strip())
+    for value in os.getenv("HOMEPAGE_FEATURED_PRODUCT_IDS", "").split(",")
+    if value.strip()
+]
+
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = os.getenv("DJANGO_DEBUG", "false").lower() in {"1", "true", "yes"}
 
 ALLOWED_HOSTS = [
-    '127.0.0.1',
-    '.ngrok-free.dev',
-    'localhost',
-
- ]
-#"127.0.0.1","localhost",
+    host.strip() for host in os.getenv(
+        "DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1,shoeverse.shaad.site",
+    ).split(",") if host.strip()
+]
+SESSION_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_SECURE = not DEBUG
+SECURE_SSL_REDIRECT = not DEBUG
 
 
 # Application definition
@@ -289,10 +297,9 @@ RAZORPAY_KEY_SECRET = os.getenv("RAZORPAY_KEY_SECRET")
 SECURE_CROSS_ORIGIN_OPENER_POLICY = "same-origin-allow-popups"
 
 CSRF_TRUSTED_ORIGINS = [
-    "https://knox-propagational-syllogistically.ngrok-free.dev",
-    "https://unurging-specularly-tana.ngrok-free.dev/",
-    'https://*.ngrok-free.app',
-    'https://*.ngrok-free.dev',
+    origin.strip().rstrip("/") for origin in os.getenv(
+        "DJANGO_CSRF_TRUSTED_ORIGINS", "https://shoeverse.shaad.site",
+    ).split(",") if origin.strip()
 ]
 
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')

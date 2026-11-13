@@ -1,0 +1,47 @@
+# Local development stack. See README.md for environment setup.
+services:
+  db:
+    image: postgres:16-bookworm
+    environment:
+      POSTGRES_DB: ${DB_NAME:-shoeverse}
+      POSTGRES_USER: ${DB_USER:-shoeverse}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-shoeverse}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  web:
+    build: .
+    env_file: .env
+    environment:
+      SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY in .env before starting Compose}
+      DJANGO_DEBUG: ${DJANGO_DEBUG:-true}
+      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1}
+      DB_NAME: ${DB_NAME:-shoeverse}
+      DB_USER: ${DB_USER:-shoeverse}
+      DB_PASSWORD: ${DB_PASSWORD:-shoeverse}
+      DB_HOST: db
+      DB_PORT: "5432"
+    ports:
+      - "127.0.0.1:${WEB_PORT:-8000}:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8000/', timeout=5)"
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 30s
+
+volumes:
+  postgres_data:
